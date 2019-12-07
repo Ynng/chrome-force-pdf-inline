@@ -13,76 +13,65 @@
  License: MIT
  */
 
-chrome.webRequest.onHeadersReceived.addListener(
-    function(details) {
-        var responseHeaders = details.responseHeaders;
-        responseHeaders.forEach(function(header){
-            switch(header.name.toLowerCase()) {
-                case 'content-disposition':
-                    header.value = header.value.replace('attachment', 'inline');
-                    console.log('Injecting Content-Disposition inline header for:', details);
-                    break;
-                case 'content-type':
-                    if (header.value.indexOf('application/octet-stream') !== -1) {
-                        // This might break stuff, but if you name your file PDF, we're gonna force it to be a PDF.
-                        header.value = header.value.replace('application/octet-stream', 'application/pdf');
-                        console.log('Injecting Content-Type PDF header for:', details);
-                    }
-                    break;
-            }
-        });
-        return {responseHeaders: responseHeaders};
-    },
-    // Catch any PDF named files and rewrite attachment to inline.
-    {
-        urls: ["*://*/*.pdf",
-            "*://*/*.Pdf",
-            "*://*/*.pDf",
-            "*://*/*.pdF",
-            "*://*/*.PDf",
-            "*://*/*.PdF",
-            "*://*/*.pDF",
-            "*://*/*.PDF"],
-        types: ["main_frame"]
-    },
-    ["blocking", "responseHeaders"]
-);
-
 // Handle PDFs on non .pdf URLs.
-chrome.webRequest.onHeadersReceived.addListener(
-    function(details) {
-        var responseHeaders = details.responseHeaders;
-        var contentTypeIsPDF = false;
-        var contentNotInline = true;
-        var contentDispositionPosition = 0;
-        responseHeaders.forEach(function(header, i){
-            switch(header.name.toLowerCase()) {
-                case 'content-disposition':
-                    if (header.value.indexOf('inline') === -1) {
-                        // We're not inline. Likely an attachment.
-                        contentNotInline = true;
-                        contentDispositionPosition = i;
-                    }
-                    break;
-                case 'content-type':
-                    if (header.value.indexOf('application/pdf') !== -1) {
-                        // It's a PDF! Let's note that.
-                        contentTypeIsPDF = true;
-                    }
-                    break;
-            }
-        });
-        if (contentTypeIsPDF && contentNotInline) {
-            // We are a PDF, but we're not inline. Let's set the inline header.
-            console.log('Injecting Content-Type PDF header for:', details);
-            if (details.responseHeaders[contentDispositionPosition].name.toLowerCase().indexOf('content-disposition') !== -1) {
-                details.responseHeaders[contentDispositionPosition].value = "inline";
-            } else {
-                console.warn('Unexpected error in responseHeaders for:', details);
-            }
+chrome.webRequest.onHeadersReceived.addListener(function(details) {
+    var responseHeaders = details.responseHeaders;
+    var contentTypeIsPDF = false;
+    var contentTypeIsOS = false;
+    var contentNotInline = false;
+    var attachmentIsPDF = false;
+    var contentDispositionPosition = 0;
+    var contentTypePosition = 0;
+    var pdfURL = details.url.toLowerCase().endsWith('.pdf');
+    responseHeaders.forEach(function(header, i) {
+        switch (header.name.toLowerCase()) {
+            case 'content-disposition':
+                if (header.value.indexOf('inline') === -1) {
+                    // We're not inline. Likely an attachment.
+                    contentNotInline = true;
+                    contentDispositionPosition = i;
+                }
+                if (/filename=.*\.pdf$/.test(header.value)) {
+                    attachmentIsPDF = true;
+                }
+                break;
+            case 'content-type':
+                contentTypePosition = i;
+                if (header.value.indexOf('application/pdf') !== -1) {
+                    // It's a PDF! Let's note that.
+                    contentTypeIsPDF = true;
+                } else if (header.value.indexOf('application/octet-stream') !== -1) {
+                    contentTypeIsOS = true;
+                }
+                break;
         }
-        return {responseHeaders: responseHeaders};
-    },
+    });
+    console.log(contentTypeIsOS + " " + attachmentIsPDF + " " + contentNotInline);
+    if (contentTypeIsPDF && contentNotInline) {
+        // We are a PDF, but we're not inline. Let's set the inline header.
+        if (details.responseHeaders[contentDispositionPosition].name.toLowerCase().indexOf('content-disposition') !== -1) {
+            console.log('Injecting Content-Disposition inline header for:', details);
+            details.responseHeaders[contentDispositionPosition].value = "inline";
+        } else {
+            console.warn('Unexpected error in responseHeaders for:', details);
+        }
+    } else if (contentTypeIsOS && (attachmentIsPDF || pdfURL) && contentNotInline) {
+        // If there is an attachment with a pdf extension, we set the inline & application/pdf headers
+        if (details.responseHeaders[contentTypePosition].name.toLowerCase().indexOf('content-type') !== -1) {
+            console.log('Injecting Content-Type PDF header for:', details);
+            details.responseHeaders[contentTypePosition].value = details.responseHeaders[contentTypePosition].value.replace('application/octet-stream', 'application/pdf');
+        } else {
+            console.warn('Unexpected error in responseHeaders for:', details);
+        }
+        if (details.responseHeaders[contentDispositionPosition].name.toLowerCase().indexOf('content-disposition') !== -1) {
+            console.log('Injecting Content-Disposition inline header for:', details);
+            details.responseHeaders[contentDispositionPosition].value = details.responseHeaders[contentDispositionPosition].value.replace('attachment', 'inline');
+        } else {
+            console.warn('Unexpected error in responseHeaders for:', details);
+        }
+    }
+    return { responseHeaders: responseHeaders };
+},
     // Catch anything, and we'll match content type above.
     {
         urls: ["http://*/*", "https://*/*"],
